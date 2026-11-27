@@ -58,7 +58,7 @@ th{color:var(--mute);font-weight:600}
     <div><span>Samples</span><b id="sN">0</b></div>
     <div><span>Duration</span><b id="sT">0.0 s</b></div>
     <div><span>Rate</span><b id="sR">–</b></div>
-    <div><span>Lost packets</span><b id="sL">0</b></div>
+    <div><span>Lost samples</span><b id="sL">0</b></div>
     <div><span>Device clock</span><b id="sC">–</b></div>
   </div>
   <div class="card"><h2>Acceleration (g), last 5 s</h2><canvas id="cA"></canvas>
@@ -69,12 +69,14 @@ th{color:var(--mute);font-weight:600}
 </main>
 <script>
 const SVC='b3c10000-7a21-4e6f-9d3a-0b5c1e7a9f01', DATA='b3c10001-7a21-4e6f-9d3a-0b5c1e7a9f01', CTRL='b3c10002-7a21-4e6f-9d3a-0b5c1e7a9f01';
-const ODR=250, ACC=8192, GYR=64, WIN=ODR*5, HDR=8;
+const NOM=222, ACC=8192, GYR=64, WIN=NOM*5, HDR=8;
 const $=id=>document.getElementById(id);
-let dev=null, ctrl=null, connected=false, recording=false;
-let recs=[], total=0, lost=0, lastSeq=null, lastRaw=null, wrap=0, startWall=0, lastT=0, rxPk=0;
+let dev=null, ctrl=null, connected=false, recording=false, wakeLock=null;
+let recs=[], total=0, lost=0, lastEnd=null, lastRaw=null, wrap=0, startWall=0, cFirst=0, tFirst=0;
+let N=0, mx=0, my=0, Cxx=0, Cxy=0;       // running regression of time (us) against sample index
 let live=[[],[],[],[],[],[]];            // rolling window for charts
 
+const period=()=>(N>1&&Cxx>0)?Cxy/Cxx:1e6/NOM;      // microseconds per sample, from the device clock
 const msg=t=>$('msg').textContent=t;
 function setState(){
   const s=$('state');
@@ -87,8 +89,9 @@ function setState(){
 }
 async function send(bytes){ if(ctrl) await ctrl.writeValue(new Uint8Array(bytes)); }
 async function syncTime(){
-  const e=Math.floor(Date.now()/1000 - new Date().getTimezoneOffset()*60);   // local time as epoch
-  await send([1,e&255,(e>>8)&255,(e>>16)&255,(e>>>24)&255]);
+  const loc=Date.now()-new Date().getTimezoneOffset()*60000;       // local time as epoch
+  const s=Math.floor(loc/1000), ms=loc%1000;
+  await send([1,s&255,(s>>>8)&255,(s>>>16)&255,(s>>>24)&255,ms&255,(ms>>>8)&255]);
   $('sC').textContent=new Date().toLocaleTimeString();
 }
 
@@ -111,42 +114,44 @@ async function pair(){
   }catch(err){ msg('Pairing failed: '+err.message); connected=false; setState(); }
 }
 function onDisc(){
-  connected=false;
+  connected=false; releaseLock();
   if(recording){ recording=false; msg('Connection lost. Recorded data is kept; you can download it.'); }
   else msg('Disconnected.');
   setState();
 }
+async function getLock(){ try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){} }
+function releaseLock(){ try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null; }
 
 async function startRec(){
-  recs=[]; total=0; lost=0; lastSeq=null; lastRaw=null; wrap=0; rxPk=0; lastT=0;
+  recs=[]; total=0; lost=0; lastEnd=null; lastRaw=null; wrap=0; N=0; mx=my=Cxx=Cxy=0;
   live=[[],[],[],[],[],[]];
-  startWall=Date.now(); recording=true; setState();
+  recording=true; setState(); getLock();
   await send([2]);
   msg('Recording…');
 }
 async function stopRec(){
   try{ await send([3]); }catch(e){}
-  recording=false; setState(); refresh();
-  msg(`Stopped. ${total.toLocaleString()} samples, ${lost} lost packets.`);
+  recording=false; releaseLock(); setState(); refresh();
+  msg(`Stopped. ${total.toLocaleString()} samples, ${lost} lost.`);
 }
 
 function onData(ev){
   if(!recording) return;
-  const dv=ev.target.value; if(dv.byteLength<HDR) return;
-  const seq=dv.getUint16(0,true), n=dv.getUint8(2), raw=dv.getUint32(4,true);
-  if(dv.byteLength<HDR+n*12) return;
-  if(lastRaw!==null && raw<lastRaw-2**31) wrap+=2**32;
-  lastRaw=raw;
-  if(lastSeq!==null) lost+=(seq-lastSeq-1)&0xFFFF;
-  lastSeq=seq; rxPk++;
+  const dv=ev.target.value, len=dv.byteLength, n=(len-HDR)/12;
+  if(len<HDR+12||!Number.isInteger(n)) return;
+  const c0=dv.getUint32(0,true), raw=dv.getUint32(4,true);
+  if(lastRaw!==null && raw<lastRaw-2**31) wrap+=2**32;     // 32-bit microsecond clock wrapped
+  lastRaw=raw; const t=raw+wrap;
+  if(lastEnd===null){ cFirst=c0; tFirst=t; startWall=Date.now()-20-(n-1)*1e3/NOM; }
+  else if(c0>lastEnd) lost+=c0-lastEnd;                    // gap in the device sample counter
+  lastEnd=c0+n;
+  const x=c0-cFirst+n-1, y=t-tFirst;                       // device time of the packet's last sample
+  N++; const dx=x-mx; mx+=dx/N; const dy=y-my; my+=dy/N; Cxx+=dx*(x-mx); Cxy+=dx*(y-my);
   const v=new Int16Array(n*6);
   for(let i=0;i<n*6;i++) v[i]=dv.getInt16(HDR+i*2,true);
-  const t0=raw+wrap;                       // microseconds since start command
-  recs.push({t0,n,v,first:total});
-  total+=n; lastT=(t0+(n-1)*1e6/ODR)/1e6;
-  for(let i=0;i<n;i++) for(let c=0;c<6;c++){
-    live[c].push(v[i*6+c]/(c<3?ACC:GYR));
-  }
+  recs.push({c:c0-cFirst,n,v});
+  total+=n;
+  for(let i=0;i<n;i++) for(let c=0;c<6;c++) live[c].push(v[i*6+c]/(c<3?ACC:GYR));
   for(const a of live) if(a.length>WIN) a.splice(0,a.length-WIN);
 }
 
@@ -167,18 +172,19 @@ function plot(cv,series){
   });
 }
 function table(){
-  const rows=[]; let need=12;
+  const rows=[], b=period(); let need=12;
   for(let r=recs.length-1;r>=0&&need>0;r--){
     const R=recs[r];
-    for(let i=R.n-1;i>=0&&need>0;i--,need--) rows.push([R.first+i,(R.t0+i*1e6/ODR)/1e6,...Array.from(R.v.subarray(i*6,i*6+6),(x,c)=>x/(c<3?ACC:GYR))]);
+    for(let i=R.n-1;i>=0&&need>0;i--,need--) rows.push([R.c+i,(R.c+i)*b/1e6,...Array.from(R.v.subarray(i*6,i*6+6),(x,c)=>x/(c<3?ACC:GYR))]);
   }
   $('tbl').innerHTML='<tr><th>#</th><th>t (s)</th><th>ax</th><th>ay</th><th>az</th><th>gx</th><th>gy</th><th>gz</th></tr>'+
     rows.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1].toFixed(3)+'</td>'+r.slice(2).map(x=>'<td>'+x.toFixed(3)+'</td>').join('')+'</tr>').join('');
 }
 function stats(){
+  const b=period(), span=lastEnd===null?0:lastEnd-cFirst;
   $('sN').textContent=total.toLocaleString();
-  $('sT').textContent=lastT.toFixed(1)+' s';
-  $('sR').textContent=lastT>0?(total/lastT).toFixed(0)+' Hz':'–';
+  $('sT').textContent=(span*b/1e6).toFixed(1)+' s';
+  $('sR').textContent=N>1?(1e6/b).toFixed(1)+' Hz':'–';
   $('sL').textContent=lost;
   $('bDl').disabled=recs.length===0;
 }
@@ -198,12 +204,13 @@ function localIso(ms){
   return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'T'+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds())+'.'+String(d.getMilliseconds()).padStart(3,'0')+(o>=0?'+':'-')+p2(Math.floor(a/60))+':'+p2(a%60);
 }
 function download(){
+  const b=period();                         // evenly spaced timestamps from the fitted sample period
   const parts=['sample,time_s,datetime_local,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n'];
   for(const R of recs){
     let s='';
     for(let i=0;i<R.n;i++){
-      const t=(R.t0+i*1e6/ODR)/1e6, k=i*6, v=R.v;
-      s+=(R.first+i)+','+t.toFixed(4)+','+localIso(startWall+t*1000)+','+
+      const idx=R.c+i, t=idx*b/1e6, k=i*6, v=R.v;
+      s+=idx+','+t.toFixed(4)+','+localIso(startWall+t*1000)+','+
         (v[k]/ACC).toFixed(5)+','+(v[k+1]/ACC).toFixed(5)+','+(v[k+2]/ACC).toFixed(5)+','+
         (v[k+3]/GYR).toFixed(4)+','+(v[k+4]/GYR).toFixed(4)+','+(v[k+5]/GYR).toFixed(4)+'\n';
     }
