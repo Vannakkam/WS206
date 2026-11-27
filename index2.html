@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BCMCH Tremor Dashboard</title>
+<style>
+:root{--bg:#f5f6f7;--card:#fff;--ink:#1d2327;--mute:#5f6b73;--line:#d9dde0;--red:#d62027;--grey:#5d6568;--ok:#1b8a4b;
+--ax:#d62027;--ay:#1f77b4;--az:#2a9d4a}
+@media (prefers-color-scheme:dark){:root{--bg:#101315;--card:#181c1f;--ink:#eceff1;--mute:#9aa5ab;--line:#2c3236;--red:#ff4a50;--grey:#9aa5ab;--ok:#4cd07f;
+--ax:#ff5a60;--ay:#5aa9e6;--az:#4cd07f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 "Segoe UI",system-ui,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:16px 20px;border-bottom:3px solid var(--red);background:var(--card)}
+header svg{width:40px;height:44px;flex:none}
+h1{font-size:1.25rem;margin:0}
+header p{margin:0;color:var(--mute);font-size:.9rem}
+#state{margin-left:auto;font-weight:600;color:var(--grey);white-space:nowrap}
+#state.on{color:var(--ok)}#state.rec{color:var(--red)}
+main{max-width:980px;margin:0 auto;padding:16px;display:grid;gap:16px}
+.bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+button{font:inherit;font-weight:600;padding:14px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink);cursor:pointer}
+button:hover:not(:disabled){border-color:var(--red)}
+button:focus-visible{outline:3px solid var(--red);outline-offset:2px}
+button:disabled{opacity:.45;cursor:not-allowed}
+#bPair{background:var(--grey);color:#fff;border-color:var(--grey)}
+#bRec{background:var(--red);color:#fff;border-color:var(--red)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px}
+.stats b{display:block;font-size:1.4rem;font-variant-numeric:tabular-nums}
+.stats span,.card h2{color:var(--mute);font-size:.85rem;font-weight:500;margin:0 0 6px}
+canvas{width:100%;height:170px;display:block}
+.leg{font-size:.8rem;color:var(--mute);margin-top:4px}
+.leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font:.8rem ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+th,td{padding:4px 8px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--mute);font-weight:600}
+#msg{color:var(--mute);font-size:.9rem;min-height:1.3em}
+</style>
+</head>
+<body>
+<header>
+  <svg viewBox="0 0 60 66" aria-hidden="true"><path d="M5 5h50v30c0 14-14 22-25 26C19 57 5 49 5 35z" fill="none" stroke="#5d6568" stroke-width="5" stroke-linejoin="round"/><path d="M26 16h8v10h10v8H34v18h-8V34H16v-8h10z" fill="#d62027"/></svg>
+  <div><h1>BCMCH Tremor</h1><p>IMU recorder over Bluetooth LE</p></div>
+  <div id="state">Not connected</div>
+</header>
+<main>
+  <div class="bar">
+    <button id="bPair">Pair</button>
+    <button id="bRec" disabled>Start Recording</button>
+    <button id="bStop" disabled>Stop Recording</button>
+    <button id="bRef">Refresh Data</button>
+    <button id="bDl" disabled>Download .CSV</button>
+  </div>
+  <div id="msg">Use Chrome or Edge. Click Pair and choose BCMCH-Tremor.</div>
+  <div class="card stats">
+    <div><span>Samples</span><b id="sN">0</b></div>
+    <div><span>Duration</span><b id="sT">0.0 s</b></div>
+    <div><span>Rate</span><b id="sR">–</b></div>
+    <div><span>Lost samples</span><b id="sL">0</b></div>
+    <div><span>Device clock</span><b id="sC">–</b></div>
+  </div>
+  <div class="card"><h2>Acceleration (g), last 5 s</h2><canvas id="cA"></canvas>
+    <div class="leg"><i style="background:var(--ax)"></i>X<i style="background:var(--ay)"></i>Y<i style="background:var(--az)"></i>Z</div></div>
+  <div class="card"><h2>Rotation (°/s), last 5 s</h2><canvas id="cG"></canvas>
+    <div class="leg"><i style="background:var(--ax)"></i>X<i style="background:var(--ay)"></i>Y<i style="background:var(--az)"></i>Z</div></div>
+  <div class="card"><h2>Latest recorded samples</h2><div class="tw"><table id="tbl"></table></div></div>
+</main>
+<script>
+const SVC='b3c10000-7a21-4e6f-9d3a-0b5c1e7a9f01', DATA='b3c10001-7a21-4e6f-9d3a-0b5c1e7a9f01', CTRL='b3c10002-7a21-4e6f-9d3a-0b5c1e7a9f01';
+const NOM=222, ACC=8192, GYR=64, WIN=NOM*5, HDR=8;
+const $=id=>document.getElementById(id);
+let dev=null, ctrl=null, connected=false, recording=false, wakeLock=null;
+let recs=[], total=0, lost=0, lastEnd=null, lastRaw=null, wrap=0, startWall=0, cFirst=0, tFirst=0;
+let N=0, mx=0, my=0, Cxx=0, Cxy=0;       // running regression of time (us) against sample index
+let live=[[],[],[],[],[],[]];            // rolling window for charts
+let db=null, pend=[], batchNo=0, saved=true, flushTimer=null;   // autosave state (IndexedDB)
+
+const period=()=>(N>1&&Cxx>0)?Cxy/Cxx:1e6/NOM;      // microseconds per sample, from the device clock
+const msg=t=>$('msg').textContent=t;
+function setState(){
+  const s=$('state');
+  s.textContent=!connected?'Not connected':recording?'Recording':'Connected';
+  s.className=!connected?'':recording?'rec':'on';
+  $('bRec').disabled=!connected||recording;
+  $('bStop').disabled=!recording;
+  $('bDl').disabled=recs.length===0;
+  $('bPair').textContent=connected?'Disconnect':'Pair';
+}
+async function send(bytes){ if(ctrl) await ctrl.writeValue(new Uint8Array(bytes)); }
+async function syncTime(){
+  const loc=Date.now()-new Date().getTimezoneOffset()*60000;       // local time as epoch
+  const s=Math.floor(loc/1000), ms=loc%1000;
+  await send([1,s&255,(s>>>8)&255,(s>>>16)&255,(s>>>24)&255,ms&255,(ms>>>8)&255]);
+  $('sC').textContent=new Date().toLocaleTimeString();
+}
+
+async function pair(){
+  if(connected){ dev.gatt.disconnect(); return; }
+  if(!navigator.bluetooth){ msg('Web Bluetooth is not available. Use Chrome or Edge over https or localhost.'); return; }
+  try{
+    dev=await navigator.bluetooth.requestDevice({filters:[{services:[SVC]},{namePrefix:'BCMCH'}],optionalServices:[SVC]});
+    dev.addEventListener('gattserverdisconnected',onDisc);
+    msg('Connecting…');
+    const srv=await dev.gatt.connect();
+    const svc=await srv.getPrimaryService(SVC);
+    ctrl=await svc.getCharacteristic(CTRL);
+    const d=await svc.getCharacteristic(DATA);
+    d.addEventListener('characteristicvaluechanged',onData);
+    await d.startNotifications();
+    connected=true; setState();
+    await syncTime();
+    msg('Paired with '+dev.name+'. Device clock set from this computer.');
+  }catch(err){ msg('Pairing failed: '+err.message); connected=false; setState(); }
+}
+function onDisc(){
+  connected=false; releaseLock(); clearInterval(flushTimer); flushDb();
+  if(recording){ recording=false; msg('Connection lost. Recorded data is kept; you can download it.'); }
+  else msg('Disconnected.');
+  setState();
+}
+async function getLock(){ try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){} }
+function releaseLock(){ try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null; }
+
+async function startRec(){
+  if(recs.length&&!saved&&!confirm('The previous recording has not been downloaded.\nStart a new recording and discard it?')) return;
+  recs=[]; total=0; lost=0; lastEnd=null; lastRaw=null; wrap=0; N=0; mx=my=Cxx=Cxy=0;
+  live=[[],[],[],[],[],[]]; pend=[]; batchNo=0; saved=true;
+  await clearDb();
+  recording=true; setState(); getLock();
+  clearInterval(flushTimer); flushTimer=setInterval(flushDb,3000);
+  await send([2]);
+  msg('Recording… (autosaved in this browser every 3 s)');
+}
+async function stopRec(){
+  try{ await send([3]); }catch(e){}
+  recording=false; releaseLock(); clearInterval(flushTimer); flushDb(); setState(); refresh();
+  msg(`Stopped. ${total.toLocaleString()} samples, ${lost} lost.`);
+}
+
+function onData(ev){
+  if(!recording) return;
+  const dv=ev.target.value, len=dv.byteLength, n=(len-HDR)/12;
+  if(len<HDR+12||!Number.isInteger(n)) return;
+  const c0=dv.getUint32(0,true), raw=dv.getUint32(4,true);
+  if(lastRaw!==null && raw<lastRaw-2**31) wrap+=2**32;     // 32-bit microsecond clock wrapped
+  lastRaw=raw; const t=raw+wrap;
+  if(lastEnd===null){ cFirst=c0; tFirst=t; startWall=Date.now()-20-(n-1)*1e3/NOM; }
+  else if(c0>lastEnd) lost+=c0-lastEnd;                    // gap in the device sample counter
+  lastEnd=c0+n;
+  const x=c0-cFirst+n-1, y=t-tFirst;                       // device time of the packet's last sample
+  N++; const dx=x-mx; mx+=dx/N; const dy=y-my; my+=dy/N; Cxx+=dx*(x-mx); Cxy+=dx*(y-my);
+  const v=new Int16Array(n*6);
+  for(let i=0;i<n*6;i++) v[i]=dv.getInt16(HDR+i*2,true);
+  const rec={c:c0-cFirst,n,v}; recs.push(rec); pend.push(rec); saved=false;
+  total+=n;
+  for(let i=0;i<n;i++) for(let c=0;c<6;c++) live[c].push(v[i*6+c]/(c<3?ACC:GYR));
+  for(const a of live) if(a.length>WIN) a.splice(0,a.length-WIN);
+}
+
+function plot(cv,series){
+  const dpr=devicePixelRatio||1, w=cv.clientWidth, h=cv.clientHeight;
+  if(cv.width!==w*dpr){cv.width=w*dpr;cv.height=h*dpr;}
+  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const cs=getComputedStyle(document.documentElement);
+  let m=0; for(const s of series) for(const x of s) m=Math.max(m,Math.abs(x)); m=m||1;
+  g.strokeStyle=cs.getPropertyValue('--line'); g.beginPath(); g.moveTo(0,h/2); g.lineTo(w,h/2); g.stroke();
+  g.fillStyle=cs.getPropertyValue('--mute'); g.font='11px sans-serif';
+  g.fillText('+'+m.toFixed(2),4,12); g.fillText('-'+m.toFixed(2),4,h-4);
+  ['--ax','--ay','--az'].forEach((c,k)=>{
+    const s=series[k]; if(!s.length) return;
+    g.strokeStyle=cs.getPropertyValue(c); g.lineWidth=1.2; g.beginPath();
+    for(let i=0;i<s.length;i++){ const x=(WIN-s.length+i)/WIN*w, y=h/2-s[i]/m*(h/2-14); i?g.lineTo(x,y):g.moveTo(x,y); }
+    g.stroke();
+  });
+}
+function table(){
+  const rows=[], b=period(); let need=12;
+  for(let r=recs.length-1;r>=0&&need>0;r--){
+    const R=recs[r];
+    for(let i=R.n-1;i>=0&&need>0;i--,need--) rows.push([R.c+i,(R.c+i)*b/1e6,...Array.from(R.v.subarray(i*6,i*6+6),(x,c)=>x/(c<3?ACC:GYR))]);
+  }
+  $('tbl').innerHTML='<tr><th>#</th><th>t (s)</th><th>ax</th><th>ay</th><th>az</th><th>gx</th><th>gy</th><th>gz</th></tr>'+
+    rows.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1].toFixed(3)+'</td>'+r.slice(2).map(x=>'<td>'+x.toFixed(3)+'</td>').join('')+'</tr>').join('');
+}
+function stats(){
+  const b=period(), span=lastEnd===null?0:lastEnd-cFirst;
+  $('sN').textContent=total.toLocaleString();
+  $('sT').textContent=(span*b/1e6).toFixed(1)+' s';
+  $('sR').textContent=N>1?(1e6/b).toFixed(1)+' Hz':'–';
+  $('sL').textContent=lost;
+  const r=N>1?1e6/b:NOM;                    // a rate far from about 222 Hz means repeated or missing samples
+  $('sR').style.color=(N>20&&(r>260||r<180))?'var(--red)':'';
+  $('sR').title=$('sR').style.color?'Unexpected sample rate: check the device Serial Monitor':'';
+  $('bDl').disabled=recs.length===0;
+}
+function refresh(){
+  stats(); table(); plot($('cA'),live.slice(0,3)); plot($('cG'),live.slice(3));
+  $('sC').textContent=new Date().toLocaleTimeString();
+}
+async function manualRefresh(){
+  refresh();
+  if(connected){ try{ await syncTime(); msg('Refreshed. Device clock re-synced.'); }catch(e){ msg('Refreshed. Clock sync failed: '+e.message); } }
+  else msg('Refreshed.');
+}
+
+const p2=x=>String(x).padStart(2,'0');
+function localIso(ms){
+  const d=new Date(ms), o=-d.getTimezoneOffset(), a=Math.abs(o);
+  return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'T'+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds())+'.'+String(d.getMilliseconds()).padStart(3,'0')+(o>=0?'+':'-')+p2(Math.floor(a/60))+':'+p2(a%60);
+}
+function download(){
+  const b=period();                         // evenly spaced timestamps from the fitted sample period
+  const parts=['sample,time_s,datetime_local,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n'];
+  for(const R of recs){
+    let s='';
+    for(let i=0;i<R.n;i++){
+      const idx=R.c+i, t=idx*b/1e6, k=i*6, v=R.v;
+      s+=idx+','+t.toFixed(4)+','+localIso(startWall+t*1000)+','+
+        (v[k]/ACC).toFixed(5)+','+(v[k+1]/ACC).toFixed(5)+','+(v[k+2]/ACC).toFixed(5)+','+
+        (v[k+3]/GYR).toFixed(4)+','+(v[k+4]/GYR).toFixed(4)+','+(v[k+5]/GYR).toFixed(4)+'\n';
+    }
+    parts.push(s);
+  }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(parts,{type:'text/csv'}));
+  const d=new Date(startWall);
+  a.download=`BCMCH_Tremor_${d.getFullYear()}${p2(d.getMonth()+1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.csv`;
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  saved=true; flushDb();
+}
+
+
+/* ---- Autosave to IndexedDB: survives a tab crash, reload or phone sleep ---- */
+const metaNow=()=>({startWall,cFirst,tFirst,lastEnd,N,mx,my,Cxx,Cxy,total,lost,saved});
+function dbOpen(){
+  if(db) return Promise.resolve(db);
+  return new Promise(res=>{
+    try{
+      const q=indexedDB.open('bcmch-tremor',1);
+      q.onupgradeneeded=()=>{q.result.createObjectStore('b',{keyPath:'id'});q.result.createObjectStore('m');};
+      q.onsuccess=()=>{db=q.result;res(db);}; q.onerror=()=>res(null);
+    }catch(e){res(null);}
+  });
+}
+function dbTx(fn){
+  return new Promise(res=>{
+    if(!db) return res();
+    try{ const t=db.transaction(['b','m'],'readwrite'); fn(t); t.oncomplete=()=>res(); t.onerror=t.onabort=()=>res(); }
+    catch(e){res();}
+  });
+}
+async function flushDb(){
+  if(!db) return;
+  const items=pend; pend=[];
+  await dbTx(t=>{ if(items.length) t.objectStore('b').put({id:batchNo++,items}); t.objectStore('m').put(metaNow(),'meta'); });
+}
+async function clearDb(){ await dbOpen(); await dbTx(t=>{t.objectStore('b').clear();t.objectStore('m').clear();}); }
+async function restore(){
+  await dbOpen(); if(!db) return;
+  const [m,all]=await new Promise(res=>{
+    try{
+      const t=db.transaction(['b','m']), r1=t.objectStore('m').get('meta'), r2=t.objectStore('b').getAll();
+      t.oncomplete=()=>res([r1.result,r2.result]); t.onerror=()=>res([null,[]]);
+    }catch(e){res([null,[]]);}
+  });
+  if(!m||!all||!all.length) return;
+  all.sort((x,y)=>x.id-y.id); recs=[];
+  for(const b of all) for(const it of b.items) recs.push(it);
+  ({startWall,cFirst,tFirst,lastEnd,N,mx,my,Cxx,Cxy,total,lost,saved}=m);
+  batchNo=all[all.length-1].id+1;
+  setState(); refresh();
+  msg(`Restored an earlier recording (${total.toLocaleString()} samples, ${saved?'already downloaded':'not yet downloaded'}). Download it, or start a new one.`);
+}
+addEventListener('pagehide',()=>flushDb());
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) flushDb(); });
+
+$('bPair').onclick=pair; $('bRec').onclick=startRec; $('bStop').onclick=stopRec;
+$('bRef').onclick=manualRefresh; $('bDl').onclick=download;
+setInterval(()=>{ if(recording){ stats(); plot($('cA'),live.slice(0,3)); plot($('cG'),live.slice(3)); } },100);
+setInterval(()=>{ if(recording) table(); },1000);
+addEventListener('resize',refresh);
+setState(); refresh(); restore();
+</script>
+</body>
+</html>
