@@ -241,10 +241,15 @@ function refresh(){
   if(rawOpen){ table(); plot($('cA'),live.slice(0,3)); plot($('cG'),live.slice(3)); }
   $('sC').textContent=new Date().toLocaleTimeString();
 }
-async function manualRefresh(){
-  refresh();
-  if(connected){ try{ await syncTime(); msg('Refreshed. Device clock re-synced.'); }catch(e){ msg('Refreshed. Clock sync failed: '+e.message); } }
-  else msg('Refreshed.');
+async function manualRefresh(){            // "Refresh Data" = clear the screen and start fresh
+  if(recs.length&&!saved&&!confirm('This clears the screen and the recording, which has not been downloaded.\nClear it anyway?')) return;
+  if(recording){ try{ await send([3]); }catch(e){} recording=false; releaseLock(); clearInterval(flushTimer); }
+  recs=[]; total=0; lost=0; lastEnd=null; lastRaw=null; wrap=0; N=0; mx=my=Cxx=Cxy=0; startWall=0; cFirst=0; tFirst=0;
+  live=[[],[],[],[],[],[]]; pend=[]; batchNo=0; saved=true; hist=[]; avgP={a:null,g:null}; avgN=0; lastM=null;
+  await clearDb();
+  setState(); refresh();
+  if(connected){ try{ await syncTime(); msg('Cleared. Device clock re-synced. Ready for a new recording.'); }catch(e){ msg('Cleared. Clock sync failed: '+e.message); } }
+  else msg('Cleared.');
 }
 
 const p2=x=>String(x).padStart(2,'0');
