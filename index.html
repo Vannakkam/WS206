@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#d62027">
+<title>BCMCH Tremor</title>
+<style>
+:root{--bg:#f3f4f5;--card:#fff;--ink:#1d2327;--mute:#5f6b73;--line:#d9dde0;--red:#d62027;--grey:#5d6568;--ok:#1b8a4b;
+--ax:#d62027;--ay:#1f77b4;--az:#2a9d4a;--band:rgba(214,32,39,.09)}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1113;--card:#181c1f;--ink:#eceff1;--mute:#9aa5ab;--line:#2c3236;--red:#ff4a50;--grey:#9aa5ab;--ok:#4cd07f;
+--ax:#ff5a60;--ay:#5aa9e6;--az:#4cd07f;--band:rgba(255,74,80,.12)}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,"Segoe UI",Roboto,sans-serif;
+padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
+header{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px;
+background:var(--card);border-bottom:3px solid var(--red)}
+header svg{width:30px;height:33px;flex:none}
+h1{font-size:1.05rem;margin:0;line-height:1.1}
+header p{margin:0;color:var(--mute);font-size:.75rem}
+#state{margin-left:auto;font-size:.85rem;font-weight:700;padding:5px 10px;border-radius:99px;border:1px solid var(--line);color:var(--grey);white-space:nowrap}
+#state.on{color:var(--ok);border-color:var(--ok)}#state.rec{color:#fff;background:var(--red);border-color:var(--red)}
+main{max-width:640px;margin:0 auto;padding:12px;display:grid;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+h2,.lbl{margin:0 0 6px;font-size:.78rem;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.04em}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-bottom:10px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{border:0;border-radius:0;min-height:44px;background:transparent;font-weight:600;color:var(--mute)}
+.seg button[aria-pressed=true]{background:var(--ink);color:var(--card)}
+.big{display:flex;align-items:baseline;gap:8px;line-height:1}
+#pw{font-size:clamp(2.6rem,15vw,4.2rem);font-weight:700;font-variant-numeric:tabular-nums}
+#pu{color:var(--mute);font-size:1rem}
+.row3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 8px}
+.row3 span,.stats span{display:block;color:var(--mute);font-size:.72rem}
+.row3 b,.stats b{display:block;font-size:1.05rem;font-variant-numeric:tabular-nums}
+canvas{width:100%;display:block}
+#cH{height:64px}#cS{height:170px}#cA,#cG{height:150px}
+.note{color:var(--mute);font-size:.74rem;margin-top:6px}
+.leg{font-size:.75rem;color:var(--mute);margin-top:4px}
+.leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+#msg{color:var(--mute);font-size:.85rem;min-height:1.2em;padding:0 4px}
+details summary{cursor:pointer;font-weight:600;min-height:32px}
+details[open] summary{margin-bottom:8px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font:.75rem ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}
+th,td{padding:4px 6px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--mute)}
+.bar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--card);border-top:1px solid var(--line);
+padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px))}
+.bar>div{max-width:640px;margin:0 auto;display:grid;gap:8px}
+.r1{grid-template-columns:1fr 1fr 1fr}.r2{grid-template-columns:1fr 1fr}
+button{font:inherit;font-weight:700;min-height:52px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);cursor:pointer;touch-action:manipulation}
+button:active:not(:disabled){transform:scale(.98)}
+button:focus-visible{outline:3px solid var(--red);outline-offset:2px}
+button:disabled{opacity:.4;cursor:not-allowed}
+.r1 button{min-height:46px;font-size:.88rem}
+#bPair{background:var(--grey);color:#fff;border-color:var(--grey)}
+#bRec{background:var(--red);color:#fff;border-color:var(--red);font-size:1.05rem}
+#bStop{background:var(--ink);color:var(--card);border-color:var(--ink);font-size:1.05rem}
+</style>
+</head>
+<body>
+<header>
+  <svg viewBox="0 0 60 66" aria-hidden="true"><path d="M5 5h50v30c0 14-14 22-25 26C19 57 5 49 5 35z" fill="none" stroke="#5d6568" stroke-width="5" stroke-linejoin="round"/><path d="M26 16h8v10h10v8H34v18h-8V34H16v-8h10z" fill="#d62027"/></svg>
+  <div><h1>BCMCH Tremor</h1><p>Bluetooth IMU recorder</p></div>
+  <div id="state">Not connected</div>
+</header>
+<main>
+  <section class="card" aria-label="Tremor power">
+    <div class="seg" role="group" aria-label="Signal"><button id="mA" aria-pressed="true">Accelerometer</button><button id="mG" aria-pressed="false">Gyroscope</button></div>
+    <div class="lbl">Tremor power, 3–20 Hz</div>
+    <div class="big"><span id="pw">–</span><span id="pu">mg²</span></div>
+    <div class="row3">
+      <div><span>Peak frequency</span><b id="pf">–</b></div>
+      <div><span>vs still noise</span><b id="pr">–</b></div>
+      <div><span>Mean / max</span><b id="pm">–</b></div>
+    </div>
+    <canvas id="cH" aria-label="Tremor power over the last two minutes"></canvas>
+    <div class="note" id="nb">Sum of x, y, z over a rolling 5 s window, updated every second. Still-sensor noise floor: 0.49 mg².</div>
+  </section>
+  <section class="card"><h2>Spectrum, last 5 s</h2><canvas id="cS" aria-label="Power spectrum 0 to 30 hertz"></canvas>
+    <div class="leg"><i style="background:var(--ax)"></i>Now<i style="background:var(--mute)"></i>Recording average<i style="background:var(--band);border:1px solid var(--line)"></i>3–20 Hz band</div></section>
+  <div id="msg" role="status">Tap Pair, then choose BCMCH-Tremor. Use Chrome on Android, or Chrome/Edge on a PC.</div>
+  <section class="card stats">
+    <div><span>Samples</span><b id="sN">0</b></div>
+    <div><span>Duration</span><b id="sT">0.0 s</b></div>
+    <div><span>Rate</span><b id="sR">–</b></div>
+    <div><span>Lost samples</span><b id="sL">0</b></div>
+    <div><span>Device clock</span><b id="sC">–</b></div>
+  </section>
+  <details class="card" id="raw"><summary>Raw traces and log</summary>
+    <h2>Acceleration (g), last 5 s</h2><canvas id="cA"></canvas>
+    <div class="leg"><i style="background:var(--ax)"></i>X<i style="background:var(--ay)"></i>Y<i style="background:var(--az)"></i>Z</div>
+    <h2 style="margin-top:12px">Rotation (°/s), last 5 s</h2><canvas id="cG"></canvas>
+    <div class="leg"><i style="background:var(--ax)"></i>X<i style="background:var(--ay)"></i>Y<i style="background:var(--az)"></i>Z</div>
+    <h2 style="margin-top:12px">Latest samples</h2><div class="tw"><table id="tbl"></table></div>
+  </details>
+</main>
+<nav class="bar" aria-label="Controls">
+  <div class="r1"><button id="bPair">Pair</button><button id="bRef">Refresh Data</button><button id="bDl" disabled>Download .CSV</button></div>
+  <div class="r2" style="margin-top:8px"><button id="bRec" disabled>Start Recording</button><button id="bStop" disabled>Stop Recording</button></div>
+</nav>
+<script>
+const SVC='b3c10000-7a21-4e6f-9d3a-0b5c1e7a9f01', DATA='b3c10001-7a21-4e6f-9d3a-0b5c1e7a9f01', CTRL='b3c10002-7a21-4e6f-9d3a-0b5c1e7a9f01';
+const NOM=222, ACC=8192, GYR=64, RAWN=NOM*5, WIN=1200, HDR=8;
+const $=id=>document.getElementById(id);
+let dev=null, ctrl=null, connected=false, recording=false, wakeLock=null;
+let recs=[], total=0, lost=0, lastEnd=null, lastRaw=null, wrap=0, startWall=0, cFirst=0, tFirst=0;
+let N=0, mx=0, my=0, Cxx=0, Cxy=0;       // running regression of time (us) against sample index
+let live=[[],[],[],[],[],[]];            // rolling window of recent samples
+let sel='a', rawOpen=false, hist=[], avgP={a:null,g:null}, avgN=0, lastM=null;   // tremor metric state
+let db=null, pend=[], batchNo=0, saved=true, flushTimer=null;   // autosave state (IndexedDB)
+
+const period=()=>(N>1&&Cxx>0)?Cxy/Cxx:1e6/NOM;      // microseconds per sample, from the device clock
+const msg=t=>$('msg').textContent=t;
+function setState(){
+  const s=$('state');
+  s.textContent=!connected?'Not connected':recording?'Recording':'Connected';
+  s.className=!connected?'':recording?'rec':'on';
+  $('bRec').disabled=!connected||recording;
+  $('bStop').disabled=!recording;
+  $('bDl').disabled=recs.length===0;
+  $('bPair').textContent=connected?'Disconnect':'Pair';
+}
+async function send(bytes){ if(ctrl) await ctrl.writeValue(new Uint8Array(bytes)); }
+async function syncTime(){
+  const loc=Date.now()-new Date().getTimezoneOffset()*60000;       // local time as epoch
+  const s=Math.floor(loc/1000), ms=loc%1000;
+  await send([1,s&255,(s>>>8)&255,(s>>>16)&255,(s>>>24)&255,ms&255,(ms>>>8)&255]);
+  $('sC').textContent=new Date().toLocaleTimeString();
+}
+
+async function pair(){
+  if(connected){ dev.gatt.disconnect(); return; }
+  if(!navigator.bluetooth){ msg('Web Bluetooth is not available. Use Chrome or Edge over https or localhost.'); return; }
+  try{
+    dev=await navigator.bluetooth.requestDevice({filters:[{services:[SVC]},{namePrefix:'BCMCH'}],optionalServices:[SVC]});
+    dev.addEventListener('gattserverdisconnected',onDisc);
+    msg('Connecting…');
+    const srv=await dev.gatt.connect();
+    const svc=await srv.getPrimaryService(SVC);
+    ctrl=await svc.getCharacteristic(CTRL);
+    const d=await svc.getCharacteristic(DATA);
+    d.addEventListener('characteristicvaluechanged',onData);
+    await d.startNotifications();
+    connected=true; setState();
+    await syncTime();
+    msg('Paired with '+dev.name+'. Device clock set from this computer.');
+  }catch(err){ msg('Pairing failed: '+err.message); connected=false; setState(); }
+}
+function onDisc(){
+  connected=false; releaseLock(); clearInterval(flushTimer); flushDb();
+  if(recording){ recording=false; msg('Connection lost. Recorded data is kept; you can download it.'); }
+  else msg('Disconnected.');
+  setState();
+}
+async function getLock(){ try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){} }
+function releaseLock(){ try{ wakeLock&&wakeLock.release(); }catch(e){} wakeLock=null; }
+
+async function startRec(){
+  if(recs.length&&!saved&&!confirm('The previous recording has not been downloaded.\nStart a new recording and discard it?')) return;
+  recs=[]; total=0; lost=0; lastEnd=null; lastRaw=null; wrap=0; N=0; mx=my=Cxx=Cxy=0;
+  live=[[],[],[],[],[],[]]; pend=[]; batchNo=0; saved=true; hist=[]; avgP={a:null,g:null}; avgN=0; lastM=null; renderMetric();
+  await clearDb();
+  recording=true; setState(); getLock();
+  clearInterval(flushTimer); flushTimer=setInterval(flushDb,3000);
+  await send([2]);
+  msg('Recording… (autosaved in this browser every 3 s)');
+}
+async function stopRec(){
+  try{ await send([3]); }catch(e){}
+  recording=false; releaseLock(); clearInterval(flushTimer); flushDb(); setState(); refresh();
+  msg(`Stopped. ${total.toLocaleString()} samples, ${lost} lost.`);
+}
+
+function onData(ev){
+  if(!recording) return;
+  const dv=ev.target.value, len=dv.byteLength, n=(len-HDR)/12;
+  if(len<HDR+12||!Number.isInteger(n)) return;
+  const c0=dv.getUint32(0,true), raw=dv.getUint32(4,true);
+  if(lastRaw!==null && raw<lastRaw-2**31) wrap+=2**32;     // 32-bit microsecond clock wrapped
+  lastRaw=raw; const t=raw+wrap;
+  if(lastEnd===null){ cFirst=c0; tFirst=t; startWall=Date.now()-20-(n-1)*1e3/NOM; }
+  else if(c0>lastEnd) lost+=c0-lastEnd;                    // gap in the device sample counter
+  lastEnd=c0+n;
+  const x=c0-cFirst+n-1, y=t-tFirst;                       // device time of the packet's last sample
+  N++; const dx=x-mx; mx+=dx/N; const dy=y-my; my+=dy/N; Cxx+=dx*(x-mx); Cxy+=dx*(y-my);
+  const v=new Int16Array(n*6);
+  for(let i=0;i<n*6;i++) v[i]=dv.getInt16(HDR+i*2,true);
+  const rec={c:c0-cFirst,n,v}; recs.push(rec); pend.push(rec); saved=false;
+  total+=n;
+  for(let i=0;i<n;i++) for(let c=0;c<6;c++) live[c].push(v[i*6+c]/(c<3?ACC:GYR));
+  for(const a of live) if(a.length>WIN) a.splice(0,a.length-WIN);
+}
+
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n);
+const mmss=t=>p2(Math.floor(t/60))+':'+p2(Math.floor(t%60));
+function fit(cv){
+  const dpr=devicePixelRatio||1, w=cv.clientWidth, h=cv.clientHeight; if(!w||!h) return {w:0};
+  const W=Math.round(w*dpr), H=Math.round(h*dpr);
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
+  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h); return {g,w,h};
+}
+function plot(cv,series){
+  const f=fit(cv); if(!f.w) return; const {g,w,h}=f;
+  const S=series.map(x=>x.slice(-RAWN)); let m=0;
+  for(const x of S) for(const v of x) m=Math.max(m,Math.abs(v)); m=m||1;
+  g.strokeStyle=css('--line'); g.beginPath(); g.moveTo(0,h/2); g.lineTo(w,h/2); g.stroke();
+  g.fillStyle=css('--mute'); g.font='11px sans-serif'; g.fillText('+'+m.toFixed(2),4,12); g.fillText('-'+m.toFixed(2),4,h-4);
+  ['--ax','--ay','--az'].forEach((c,k)=>{
+    const x=S[k]; if(!x.length) return;
+    g.strokeStyle=css(c); g.lineWidth=1.2; g.beginPath();
+    for(let i=0;i<x.length;i++){ const px=(RAWN-x.length+i)/RAWN*w, py=h/2-x[i]/m*(h/2-14); i?g.lineTo(px,py):g.moveTo(px,py); }
+    g.stroke();
+  });
+}
+function table(){
+  const rows=[], b=period(); let need=12;
+  for(let r=recs.length-1;r>=0&&need>0;r--){
+    const R=recs[r];
+    for(let i=R.n-1;i>=0&&need>0;i--,need--) rows.push([R.c+i,(R.c+i)*b/1e6,...Array.from(R.v.subarray(i*6,i*6+6),(x,c)=>x/(c<3?ACC:GYR))]);
+  }
+  $('tbl').innerHTML='<tr><th>#</th><th>t (s)</th><th>ax</th><th>ay</th><th>az</th><th>gx</th><th>gy</th><th>gz</th></tr>'+
+    rows.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1].toFixed(3)+'</td>'+r.slice(2).map(x=>'<td>'+x.toFixed(3)+'</td>').join('')+'</tr>').join('');
+}
+function stats(){
+  const b=period(), span=lastEnd===null?0:lastEnd-cFirst;
+  $('sN').textContent=total.toLocaleString();
+  if(recording) $('state').textContent='Recording '+mmss(span*b/1e6);
+  $('sT').textContent=(span*b/1e6).toFixed(1)+' s';
+  $('sR').textContent=N>1?(1e6/b).toFixed(1)+' Hz':'–';
+  $('sL').textContent=lost;
+  const r=N>1?1e6/b:NOM;                    // a rate far from about 222 Hz means repeated or missing samples
+  $('sR').style.color=(N>20&&(r>260||r<180))?'var(--red)':'';
+  $('sR').title=$('sR').style.color?'Unexpected sample rate: check the device Serial Monitor':'';
+  $('bDl').disabled=recs.length===0;
+}
+function refresh(){
+  stats(); renderMetric();
+  if(rawOpen){ table(); plot($('cA'),live.slice(0,3)); plot($('cG'),live.slice(3)); }
+  $('sC').textContent=new Date().toLocaleTimeString();
+}
+async function manualRefresh(){
+  refresh();
+  if(connected){ try{ await syncTime(); msg('Refreshed. Device clock re-synced.'); }catch(e){ msg('Refreshed. Clock sync failed: '+e.message); } }
+  else msg('Refreshed.');
+}
+
+const p2=x=>String(x).padStart(2,'0');
+function localIso(ms){
+  const d=new Date(ms), o=-d.getTimezoneOffset(), a=Math.abs(o);
+  return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'T'+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds())+'.'+String(d.getMilliseconds()).padStart(3,'0')+(o>=0?'+':'-')+p2(Math.floor(a/60))+':'+p2(a%60);
+}
+function download(){
+  const b=period();                         // evenly spaced timestamps from the fitted sample period
+  const parts=['sample,time_s,datetime_local,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps\n'];
+  for(const R of recs){
+    let s='';
+    for(let i=0;i<R.n;i++){
+      const idx=R.c+i, t=idx*b/1e6, k=i*6, v=R.v;
+      s+=idx+','+t.toFixed(5)+','+localIso(startWall+t*1000)+','+
+        (v[k]/ACC).toFixed(5)+','+(v[k+1]/ACC).toFixed(5)+','+(v[k+2]/ACC).toFixed(5)+','+
+        (v[k+3]/GYR).toFixed(4)+','+(v[k+4]/GYR).toFixed(4)+','+(v[k+5]/GYR).toFixed(4)+'\n';
+    }
+    parts.push(s);
+  }
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob(parts,{type:'text/csv'}));
+  const d=new Date(startWall);
+  a.download=`BCMCH_Tremor_${d.getFullYear()}${p2(d.getMonth()+1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.csv`;
+  a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  saved=true; flushDb();
+}
+
+
+
+/* ---- Tremor metric: Welch power spectral density, summed over x, y, z and integrated 3-20 Hz ---- */
+const BASE={a:0.49,g:0.049}, UNIT={a:'mg²',g:'(°/s)²'}, NS=512, HOP=256;   // BASE = still-sensor noise floor (3-20 Hz)
+const HANN=Float64Array.from({length:NS},(_,i)=>0.5-0.5*Math.cos(2*Math.PI*i/NS));
+const HSS=HANN.reduce((a,w)=>a+w*w,0);
+function fft(re,im){
+  const n=re.length;
+  for(let i=1,j=0;i<n;i++){ let bit=n>>1; for(;j&bit;bit>>=1) j^=bit; j^=bit; if(i<j){ let t=re[i];re[i]=re[j];re[j]=t; t=im[i];im[i]=im[j];im[j]=t; } }
+  for(let len=2;len<=n;len<<=1){
+    const ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang);
+    for(let i=0;i<n;i+=len){ let cr=1,ci=0;
+      for(let k=0;k<len/2;k++){
+        const a=i+k, b=a+len/2, tr=re[b]*cr-im[b]*ci, ti=re[b]*ci+im[b]*cr;
+        re[b]=re[a]-tr; im[b]=im[a]-ti; re[a]+=tr; im[a]+=ti;
+        const t=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=t;
+      }
+    }
+  }
+}
+function welch(x,fs){                       // one-sided PSD (units^2/Hz) of the newest samples, up to 3 overlapping segments
+  const psd=new Float64Array(NS/2+1), re=new Float64Array(NS), im=new Float64Array(NS); let segs=0;
+  for(let s0=x.length-NS; s0>=0&&segs<3; s0-=HOP){
+    let m=0; for(let i=0;i<NS;i++) m+=x[s0+i]; m/=NS;                       // remove DC (gravity)
+    for(let i=0;i<NS;i++){ re[i]=(x[s0+i]-m)*HANN[i]; im[i]=0; }
+    fft(re,im);
+    for(let k=0;k<=NS/2;k++){ let p=(re[k]*re[k]+im[k]*im[k])/(fs*HSS); if(k>0&&k<NS/2) p*=2; psd[k]+=p; }
+    segs++;
+  }
+  for(let k=0;k<psd.length;k++) psd[k]/=segs; return psd;
+}
+function metric(){
+  if(live[0].length<NS||N<2) return null;
+  const fs=1e6/period(), df=fs/NS, k0=Math.ceil(3/df), k1=Math.floor(20/df), out={};
+  for(const [key,idx,scale] of [['a',[0,1,2],1e6],['g',[3,4,5],1]]){
+    const sum=new Float64Array(NS/2+1);
+    for(const c of idx){ const p=welch(live[c],fs); for(let k=0;k<p.length;k++) sum[k]+=p[k]; }
+    let bp=0, pk=k0; for(let k=k0;k<=k1;k++){ bp+=sum[k]*df; if(sum[k]>sum[pk]) pk=k; }
+    out[key]={psd:sum,power:bp*scale,peak:pk*df,df};
+  }
+  return out;
+}
+function tick1s(){
+  const m=metric(); if(!m) return; lastM=m; hist.push({a:m.a.power,g:m.g.power});
+  for(const k of ['a','g']){ if(!avgP[k]) avgP[k]=new Float64Array(m[k].psd.length); for(let i=0;i<avgP[k].length;i++) avgP[k][i]+=m[k].psd[i]; }
+  avgN++; renderMetric();
+}
+const fmtP=v=>v>=100?v.toFixed(0):v>=10?v.toFixed(1):v>=1?v.toFixed(2):v.toFixed(3);
+function pick(k){
+  sel=k; $('mA').setAttribute('aria-pressed',k==='a'); $('mG').setAttribute('aria-pressed',k==='g');
+  $('nb').textContent='Sum of x, y, z over a rolling 5 s window, updated every second. Still-sensor noise floor: '+BASE[k]+' '+UNIT[k]+'.';
+  renderMetric();
+}
+function renderMetric(){
+  const h=hist.map(x=>x[sel]);
+  if(!lastM){ for(const id of ['pw','pf','pr','pm']) $(id).textContent='–'; $('pu').textContent=UNIT[sel]; drawSpark(h); drawSpec(null); return; }
+  const d=lastM[sel], r=d.power/BASE[sel];
+  $('pw').textContent=fmtP(d.power); $('pu').textContent=UNIT[sel];
+  $('pf').textContent=r>=3?d.peak.toFixed(1)+' Hz':'–';
+  $('pr').textContent='×'+(r>=10?r.toFixed(0):r.toFixed(1));
+  $('pm').textContent=fmtP(h.reduce((a,b)=>a+b,0)/h.length)+' / '+fmtP(h.reduce((a,b)=>Math.max(a,b),0));
+  drawSpark(h); drawSpec(lastM);
+}
+function drawSpark(all){
+  const f=fit($('cH')); if(!f.w) return; const {g,w,h}=f, v=all.slice(-120);
+  let top=BASE[sel]*2; for(const x of v) top=Math.max(top,x);
+  g.strokeStyle=css('--line'); g.setLineDash([4,4]); const by=h-2-BASE[sel]/top*(h-6); g.beginPath(); g.moveTo(0,by); g.lineTo(w,by); g.stroke(); g.setLineDash([]);
+  if(v.length<2) return;
+  g.strokeStyle=css('--ax'); g.lineWidth=2; g.beginPath();
+  v.forEach((x,i)=>{ const px=i/(v.length-1)*w, py=h-2-x/top*(h-6); i?g.lineTo(px,py):g.moveTo(px,py); }); g.stroke();
+}
+function drawSpec(m){
+  const f=fit($('cS')); if(!f.w) return; const {g,w,h}=f, FM=30, pl=6, pb=18, pw=w-pl-6, ph=h-pb-8;
+  g.fillStyle=css('--band'); g.fillRect(pl+3/FM*pw,8,17/FM*pw,ph);
+  g.fillStyle=css('--mute'); g.font='11px sans-serif'; g.textAlign='center';
+  for(const hz of [0,3,10,20,30]) g.fillText(hz,pl+hz/FM*pw,h-4);
+  g.textAlign='left'; g.fillText('Hz',w-18,h-18);
+  if(!m){ g.fillText('Waiting for about 3 s of data…',pl+8,28); return; }
+  const d=m[sel], av=avgP[sel]; let top=0;
+  for(let k=1;k<d.psd.length&&k*d.df<=FM;k++) top=Math.max(top,d.psd[k],av?av[k]/avgN:0); top=top||1;
+  const line=(arr,div,col,wid)=>{ g.strokeStyle=col; g.lineWidth=wid; g.beginPath(); let first=true;
+    for(let k=1;k<arr.length&&k*d.df<=FM;k++){ const x=pl+k*d.df/FM*pw, y=8+ph-arr[k]/div/top*ph; first?g.moveTo(x,y):g.lineTo(x,y); first=false; } g.stroke(); };
+  if(av&&avgN>1) line(av,avgN,css('--mute'),1.5);
+  line(d.psd,1,css('--ax'),2);
+}
+
+/* ---- Autosave to IndexedDB: survives a tab crash, reload or phone sleep ---- */
+const metaNow=()=>({startWall,cFirst,tFirst,lastEnd,N,mx,my,Cxx,Cxy,total,lost,saved});
+function dbOpen(){
+  if(db) return Promise.resolve(db);
+  return new Promise(res=>{
+    try{
+      const q=indexedDB.open('bcmch-tremor',1);
+      q.onupgradeneeded=()=>{q.result.createObjectStore('b',{keyPath:'id'});q.result.createObjectStore('m');};
+      q.onsuccess=()=>{db=q.result;res(db);}; q.onerror=()=>res(null);
+    }catch(e){res(null);}
+  });
+}
+function dbTx(fn){
+  return new Promise(res=>{
+    if(!db) return res();
+    try{ const t=db.transaction(['b','m'],'readwrite'); fn(t); t.oncomplete=()=>res(); t.onerror=t.onabort=()=>res(); }
+    catch(e){res();}
+  });
+}
+async function flushDb(){
+  if(!db) return;
+  const items=pend; pend=[];
+  await dbTx(t=>{ if(items.length) t.objectStore('b').put({id:batchNo++,items}); t.objectStore('m').put(metaNow(),'meta'); });
+}
+async function clearDb(){ await dbOpen(); await dbTx(t=>{t.objectStore('b').clear();t.objectStore('m').clear();}); }
+async function restore(){
+  await dbOpen(); if(!db) return;
+  const [m,all]=await new Promise(res=>{
+    try{
+      const t=db.transaction(['b','m']), r1=t.objectStore('m').get('meta'), r2=t.objectStore('b').getAll();
+      t.oncomplete=()=>res([r1.result,r2.result]); t.onerror=()=>res([null,[]]);
+    }catch(e){res([null,[]]);}
+  });
+  if(!m||!all||!all.length) return;
+  all.sort((x,y)=>x.id-y.id); recs=[];
+  for(const b of all) for(const it of b.items) recs.push(it);
+  ({startWall,cFirst,tFirst,lastEnd,N,mx,my,Cxx,Cxy,total,lost,saved}=m);
+  batchNo=all[all.length-1].id+1;
+  setState(); refresh();
+  msg(`Restored an earlier recording (${total.toLocaleString()} samples, ${saved?'already downloaded':'not yet downloaded'}). Download it, or start a new one.`);
+}
+addEventListener('pagehide',()=>flushDb());
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) flushDb(); });
+
+$('bPair').onclick=pair; $('bRec').onclick=startRec; $('bStop').onclick=stopRec;
+$('bRef').onclick=manualRefresh; $('bDl').onclick=download;
+setInterval(()=>{ if(recording){ stats(); if(rawOpen){ plot($('cA'),live.slice(0,3)); plot($('cG'),live.slice(3)); } } },200);
+setInterval(()=>{ if(recording){ tick1s(); if(rawOpen) table(); } },1000);
+$('raw').addEventListener('toggle',()=>{ rawOpen=$('raw').open; refresh(); });
+$('mA').onclick=()=>pick('a'); $('mG').onclick=()=>pick('g');
+addEventListener('resize',refresh);
+setState(); refresh(); restore();
+</script>
+</body>
+</html>
